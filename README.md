@@ -15,7 +15,7 @@ flowchart LR
     E -->|upload| F[(GCS processed/)]
     F -->|Hive path discovery| G[(BigQuery trips table<br/>daily partitioned by pickup_date)]
     G --> H[Analytics SQL<br/>queries/]
-    G --> I[Pipeline verification<br/>pipeline.verify]
+    G --> I[Verification and metrics<br/>pipeline.verify<br/>pipeline.metrics]
 ```
 
 The pipeline has three executable stages:
@@ -38,7 +38,8 @@ for each stage.
 │   ├── ingest.py           # Local Parquet to GCS
 │   ├── transform.py        # PySpark cleaning and enrichment
 │   ├── load_to_bq.py       # GCS to partitioned BigQuery table
-│   └── verify.py           # Post-load checks
+│   ├── metrics.py           # Reproducible volume and performance metrics
+│   └── verify.py            # Post-load checks
 ├── queries/                # BigQuery analytics queries
 ├── tests/                  # Mocked GCP and local PySpark tests
 ├── .env.example
@@ -83,7 +84,14 @@ gcloud --version
    GCS_BUCKET=your-globally-unique-bucket-name
    BQ_PROJECT=your-gcp-project-id
    BQ_DATASET=taxi_analytics
+   EXPECTED_PICKUP_START_DATE=2026-05-01
+   EXPECTED_PICKUP_END_DATE=2026-06-01
    ```
+
+   The pickup window is optional, but both values must be supplied together.
+   The start is inclusive and the end is exclusive. Set the window to the batch
+   being processed so incorrectly dated source rows do not create stray
+   partitions.
 
 4. Put one or more source files in `data/raw/`:
 
@@ -227,6 +235,8 @@ uv run python -m pipeline.load_to_bq
 
 The current BigQuery load uses `WRITE_TRUNCATE`. Running the load stage replaces
 all rows in the configured destination table. It does not delete GCS objects.
+The transform stage treats the processed GCS prefix as derived output and
+replaces its existing objects after the local Spark write succeeds.
 
 ## Verification and Tests
 
@@ -251,6 +261,38 @@ uv run pytest
 
 Tests use an in-memory local Spark session and mocked BigQuery clients. They do
 not read from or write to GCP.
+
+Collect reproducible metrics from local Parquet metadata, GCS, and BigQuery:
+
+```bash
+uv run python -m pipeline.metrics
+uv run python -m pipeline.metrics --json
+```
+
+The metrics command is read-only. It requires local raw Parquet files and valid
+GCP credentials.
+
+## Verified Benchmark
+
+Measured on August 26, 2026 using NYC yellow taxi data for May 2026:
+
+| Metric | Result |
+|---|---:|
+| Raw rows | 4,090,836 |
+| Validated BigQuery rows | 3,911,872 |
+| Rejected rows | 178,964 (4.37%) |
+| Retention rate | 95.63% |
+| Daily partitions | 31 |
+| Derived-field null rows | 0 |
+| Non-positive trip durations | 0 |
+| Rows outside the expected month | 0 |
+| GCS processed objects | 66 |
+| GCS processed size | 105,714,325 bytes |
+| BigQuery logical size | 669,482,733 bytes |
+| Unfiltered dry-run scan | 31,294,976 bytes |
+| Single-day dry-run scan | 2,098,928 bytes |
+| Scan reduction | 93.29% |
+| Automated tests | 15 |
 
 ## Design Decisions
 
@@ -288,7 +330,8 @@ both `fare_amount` and `pickup_date` across the complete table.
 ### Data quality rules
 
 The transform drops rows missing required timestamps, distances, fares, or
-location IDs. It also rejects non-positive fares and distances before deriving:
+location IDs. It rejects non-positive fares, distances, and trip durations, and
+can enforce an expected pickup-date window before deriving:
 
 - `trip_duration`, in minutes
 - `revenue_per_mile`

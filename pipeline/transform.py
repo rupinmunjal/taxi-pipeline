@@ -3,6 +3,7 @@
 import glob
 import logging
 import os
+from datetime import date
 
 from google.cloud import storage
 from pyspark.sql import DataFrame, SparkSession
@@ -72,6 +73,17 @@ def upload_processed_to_gcs(bucket_name: str, local_dir: str, gcs_prefix: str) -
     return uploaded
 
 
+def clear_gcs_prefix(bucket_name: str, prefix: str) -> int:
+    """Delete existing derived objects before publishing a replacement."""
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blobs = list(bucket.list_blobs(prefix=prefix))
+    if blobs:
+        bucket.delete_blobs(blobs)
+    logger.info("Removed %d existing object(s) from gs://%s/%s", len(blobs), bucket_name, prefix)
+    return len(blobs)
+
+
 def get_spark_session() -> SparkSession:
     """Create (or fetch) the Spark session used for the transform stage."""
     return SparkSession.builder.appName("taxi-transform").getOrCreate()
@@ -82,15 +94,20 @@ def load_raw_data(spark: SparkSession, path: str) -> DataFrame:
     return spark.read.parquet(path)
 
 
-def clean_data(df: DataFrame) -> DataFrame:
+def clean_data(
+    df: DataFrame,
+    expected_start: date | None = None,
+    expected_end: date | None = None,
+) -> DataFrame:
     """Remove invalid trips and add analytical columns."""
     pickup_time = F.unix_timestamp("tpep_pickup_datetime")
     dropoff_time = F.unix_timestamp("tpep_dropoff_datetime")
 
-    return (
+    cleaned = (
         df.dropna(subset=REQUIRED_COLUMNS)
         .filter(F.col("fare_amount") > 0)
         .filter(F.col("trip_distance") > 0)
+        .filter(F.col("tpep_dropoff_datetime") > F.col("tpep_pickup_datetime"))
         .withColumn("trip_duration", (dropoff_time - pickup_time) / 60)
         .withColumn(
             "revenue_per_mile",
@@ -98,6 +115,13 @@ def clean_data(df: DataFrame) -> DataFrame:
         )
         .withColumn("pickup_date", F.to_date("tpep_pickup_datetime"))
     )
+
+    if expected_start is not None and expected_end is not None:
+        cleaned = cleaned.filter(
+            (F.col("pickup_date") >= F.lit(expected_start.isoformat()))
+            & (F.col("pickup_date") < F.lit(expected_end.isoformat()))
+        )
+    return cleaned
 
 
 def write_processed_data(df: DataFrame, path: str) -> None:
@@ -115,12 +139,17 @@ def run() -> None:
     spark = get_spark_session()
     try:
         df = load_raw_data(spark, f"{config.LOCAL_RAW_DIR}*.parquet")
-        df_clean = clean_data(df)
+        df_clean = clean_data(
+            df,
+            config.EXPECTED_PICKUP_START_DATE,
+            config.EXPECTED_PICKUP_END_DATE,
+        )
         write_processed_data(df_clean, config.LOCAL_PROCESSED_DIR)
         logger.info("Transform complete.")
     finally:
         spark.stop()
 
+    clear_gcs_prefix(config.GCS_BUCKET, config.GCS_PROCESSED_PREFIX)
     upload_processed_to_gcs(
         config.GCS_BUCKET, config.LOCAL_PROCESSED_DIR, config.GCS_PROCESSED_PREFIX
     )
