@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments and local configuration
+.venv/
+.venv-*/
+.env
+.env.*
+!.env.example
+
+# Local data and Spark artifacts
+/data/
+*.parquet
+metastore_db/
+spark-warehouse/
+derby.log
+
+# Credentials and private keys
+/secrets/
+*service-account*.json
+*service_account*.json
+*credentials*.json
+*.pem
+*.key
+
+# Terraform working files and local state
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
