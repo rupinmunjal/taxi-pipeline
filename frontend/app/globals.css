@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f4f4f5;
+  --foreground: #18181b;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+::selection {
+  background: #fcd34d;
+  color: #18181b;
+}
+
+/* Tremor applies chart colors to wrapper groups while Recharts emits empty
+   presentation attributes on child SVG shapes, so scope the intended accent. */
+.taxi-revenue-chart .recharts-bar-rectangle rect {
+  fill: #d97706;
+}
+
+.taxi-duration-chart .recharts-line-curve {
+  stroke: #d97706;
+}
