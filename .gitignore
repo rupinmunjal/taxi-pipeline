@@ -17,8 +17,6 @@ wheels/
 # Virtual environments and local configuration
 .venv/
 .venv-*/
-.env
-.env.*
 !.env.example
 !frontend/.env.local.example
 
@@ -58,7 +56,6 @@ crash.*.log
 
 # Editors and operating systems
 .idea/
-.vscode/
 .DS_Store
 Thumbs.db
 
@@ -67,3 +64,5 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+config.bat
+node_modules
