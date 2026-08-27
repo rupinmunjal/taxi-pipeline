@@ -16,6 +16,8 @@ flowchart LR
     F -->|Hive path discovery| G[(BigQuery trips table<br/>daily partitioned by pickup_date)]
     G --> H[Analytics SQL<br/>queries/]
     G --> I[Verification and metrics<br/>pipeline.verify<br/>pipeline.metrics]
+    G -->|parameterized queries| J[FastAPI API<br/>api/]
+    J -->|typed JSON| K[Next.js + Tremor<br/>frontend/]
 ```
 
 The pipeline has three executable stages:
@@ -33,6 +35,11 @@ for each stage.
 ```text
 .
 ├── main.py                 # Pipeline orchestrator
+├── api/
+│   ├── main.py             # FastAPI routes and CORS
+│   ├── bigquery_client.py  # Shared BigQuery client
+│   ├── analytics.py        # Parameterized queries and TTL cache
+│   └── models.py           # Pydantic response models
 ├── pipeline/
 │   ├── config.py           # Environment-based configuration
 │   ├── ingest.py           # Local Parquet to GCS
@@ -42,6 +49,10 @@ for each stage.
 │   └── verify.py            # Post-load checks
 ├── queries/                # BigQuery analytics queries
 ├── tests/                  # Mocked GCP and local PySpark tests
+├── frontend/
+│   ├── app/                # Next.js App Router dashboard
+│   ├── components/         # Tremor charts, cards, and table
+│   └── lib/api.ts          # Typed FastAPI client
 ├── .env.example
 └── pyproject.toml
 ```
@@ -51,6 +62,7 @@ for each stage.
 - Python 3.14
 - [`uv`](https://docs.astral.sh/uv/)
 - Java 17 or newer for PySpark
+- Node.js 20.9 or newer and npm for the dashboard
 - A Google Cloud project with billing enabled
 - Google Cloud CLI, including the `gcloud` and `bq` commands
 - NYC yellow taxi data in Parquet format
@@ -86,6 +98,7 @@ gcloud --version
    BQ_DATASET=taxi_analytics
    EXPECTED_PICKUP_START_DATE=2026-05-01
    EXPECTED_PICKUP_END_DATE=2026-06-01
+   FRONTEND_ORIGIN=http://localhost:3000
    ```
 
    The pickup window is optional, but both values must be supplied together.
@@ -232,6 +245,50 @@ uv run python -m pipeline.ingest
 uv run python -m pipeline.transform
 uv run python -m pipeline.load_to_bq
 ```
+
+## Frontend and API
+
+The dashboard uses a separated architecture. FastAPI is the only service that
+accesses BigQuery or GCP credentials. The Next.js application receives typed
+JSON responses and never imports a Google Cloud SDK.
+
+1. Start the backend from the repository root:
+
+   ```bash
+   uv run uvicorn api.main:app --reload
+   ```
+
+   The API runs at `http://localhost:8000`. Interactive endpoint documentation
+   is available at `http://localhost:8000/docs`.
+
+2. Configure and start the frontend in a second terminal:
+
+   ```bash
+   cd frontend
+   cp .env.local.example .env.local
+   npm install
+   npm run dev
+   ```
+
+   Open `http://localhost:3000`.
+
+The dashboard contains three summary cards, average revenue by weekday,
+average trip duration by weekday, and the ten highest-revenue pickup zones.
+Selecting both dates applies an inclusive `pickup_date` range to all requests.
+A partial or reversed range is rejected by the API.
+
+Analytics responses are cached in the FastAPI process for five minutes using
+the endpoint and date range as the cache key. Every BigQuery query logs
+`total_bytes_processed`, making partition-pruning differences visible without
+exposing credentials or query execution to the browser.
+
+Available endpoints:
+
+- `GET /api/summary`
+- `GET /api/revenue-by-weekday`
+- `GET /api/duration-by-weekday`
+- `GET /api/top-zones`
+- `GET /api/health`
 
 The current BigQuery load uses `WRITE_TRUNCATE`. Running the load stage replaces
 all rows in the configured destination table. It does not delete GCS objects.
